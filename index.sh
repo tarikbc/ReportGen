@@ -15,7 +15,7 @@ fi
 
 # Function to send diff summary to OpenAI API
 send_to_openai() {
-  # echo "Sending ${#1} characters to OpenAI API"
+  # echo "Sending ${#1} characters to OpenAI API..."
   local diff_summary_content="$1"
   
   # Sanitize the diff summary
