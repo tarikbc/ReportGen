@@ -27,7 +27,7 @@ send_to_openai() {
 
   # Use jq to format the JSON request body with roles and content
   local request_body=$(jq -n --arg system "You are a tool that summarizes git diffs into concise, human-readable topics." \
-                            --arg examples "Try to reference the component name in the topic.\nDon't create topics that are too long-winded.\nDon't create topics that are too vague.\n Examples of expected output topics:\n- Added new type definitions for Tutor entity in Tutors component\n- Refactored TutorItem props for improved type safety\n- Updated TutorsList component to handle missing index\n- Extended Tutor schema with voting fields (positiveVotes, neutralVotes, negativeVotes)\n- Enhanced button properties in Tutors component for accessibility" \
+                            --arg examples "Focus on interpreting what the code change does to come up with the topic.\nTry to reference the component name in the topic.\nDon't create topics that are too long-winded.\nDon't create topics that are too vague.\n Examples of expected output topics:\n- Added new type definitions for Tutor entity in Tutors component\n- Refactored TutorItem props for improved type safety\n- Updated TutorsList component to handle missing index\n- Extended Tutor schema with voting fields (positiveVotes, neutralVotes, negativeVotes)\n- Enhanced button properties in Tutors component for accessibility" \
                             --arg diff "$sanitized_diff_summary" \
     '{
         "model": "gpt-4o-mini",
