@@ -28,11 +28,19 @@ This script provides an automated way to summarize changes made to files in a Gi
    - Install `jq` on Debian-based systems with `sudo apt-get install jq`.
    - Install `curl` if not already available.
 
+4. Run the `install.sh` script to set up the `reportgen` command:
+    ```bash
+    chmod +x install.sh
+    ./install.sh
+    ```
+
+   This will create a symbolic link to the `index.sh` script in `/usr/local/bin`, allowing you to run `reportgen` from anywhere.
+
 ## Usage
 
 1. Run the script in your Git repository:
     ```bash
-    ./index.sh
+    reportgen
     ```
 
 2. The script will:
@@ -49,6 +57,7 @@ This script provides an automated way to summarize changes made to files in a Gi
 - Updated TutorsList component to handle missing index
 ...
 ```
+
 ### License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

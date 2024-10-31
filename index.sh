@@ -1,8 +1,12 @@
 #!/bin/bash
 
-# Load environment variables from .env file
+# Determine the directory where the script is located, even if it's a symlink
+SCRIPT_PATH="$(readlink -f "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
+# Load environment variables from .env file in the script's directory
 set -o allexport
-source .env
+source "$SCRIPT_DIR/.env"
 set +o allexport
 
 MAX_CHARACTERS=4000  # Set max characters per OpenAI API call
