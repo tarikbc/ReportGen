@@ -17,9 +17,11 @@ if [ -z "$OPENAI_API_KEY" ]; then
   exit 1
 fi
 
+# Get optional commit argument
+COMMIT_HASH="$1"
+
 # Function to send diff summary to OpenAI API
 send_to_openai() {
-  # echo "Sending ${#1} characters to OpenAI API..."
   local diff_summary_content="$1"
   
   # Sanitize the diff summary
@@ -70,8 +72,13 @@ else:
   echo "$text"
 }
 
-# Get the list of changed files
-changed_files=$(git diff --name-only)
+# If a commit hash is provided, generate diff against that commit
+if [ -n "$COMMIT_HASH" ]; then
+  changed_files=$(git diff --name-only "$COMMIT_HASH~" "$COMMIT_HASH")
+else
+  # Otherwise, use the current working diff
+  changed_files=$(git diff --name-only)
+fi
 
 # Exit if there's no diff
 if [ -z "$changed_files" ]; then
@@ -79,19 +86,23 @@ if [ -z "$changed_files" ]; then
   exit 0
 fi
 
-# Generate the full diff summary content
 diff_summary=""
+
+# Generate the diff summary
 for file in $changed_files; do
-    # Get the full diff without line limits
-    file_diff=$(git diff "$file")
-    
-    # Append each full diff to the diff content
+    if [ -n "$COMMIT_HASH" ]; then
+        # Diff for specified commit
+        file_diff=$(git diff "$COMMIT_HASH~" "$COMMIT_HASH" -- "$file")
+    else
+        # Diff against the current working tree
+        file_diff=$(git diff "$file")
+    fi
+
     diff_summary="$diff_summary\n\nFile: $file\nDiff Summary:\n$file_diff"
 
-    # Check if we hit the character limit
     if [ ${#diff_summary} -ge $MAX_CHARACTERS ]; then
         send_to_openai "$diff_summary"
-        diff_summary=""  # Reset diff summary after sending
+        diff_summary=""  # Reset after sending
     fi
 done
 
