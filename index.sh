@@ -95,7 +95,7 @@ for file in $changed_files; do
         file_diff=$(git diff "$COMMIT_HASH~" "$COMMIT_HASH" -- "$file")
     else
         # Diff against the current working tree
-        file_diff=$(git diff "$file")
+        file_diff=$(git diff -- "$file")  # Added '--' here
     fi
 
     diff_summary="$diff_summary\n\nFile: $file\nDiff Summary:\n$file_diff"
