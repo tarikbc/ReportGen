@@ -2,6 +2,25 @@
 
 # Functions for interacting with OpenAI APIs
 
+# Define model variables - using GPT-4.1 mini as the default model
+DEFAULT_MODEL="gpt-4.1-mini"
+rg_GPT41MINI_INPUT_PRICE=0.40
+rg_GPT41MINI_CACHED_INPUT_PRICE=0.10
+rg_GPT41MINI_OUTPUT_PRICE=1.60
+
+# Define GPT-4o pricing (if used)
+rg_GPT4O_INPUT_PRICE=0.01
+rg_GPT4O_OUTPUT_PRICE=0.03
+
+# Initialize token counters as global variables with export
+export rg_TOTAL_INPUT_TOKENS=0
+export rg_TOTAL_OUTPUT_TOKENS=0
+export rg_TOTAL_COST=0
+
+# Initialize and reset token counter file
+TOKEN_FILE="/tmp/reportgen_token_counters.txt"
+echo "0 0 0" > "$TOKEN_FILE"
+
 #######################################
 # Send git diff to OpenAI and get a summary.
 #######################################
@@ -18,8 +37,9 @@ generate_summary() {
     --arg system "$SYSTEM_PROMPT" \
     --arg user_prompt "$USER_PROMPT" \
     --arg diff "$sanitized_diff" \
+    --arg model "$DEFAULT_MODEL" \
     '{
-      "model": "gpt-4o",
+      "model": $model,
       "messages": [
         {
           "role": "system",
@@ -56,8 +76,6 @@ generate_suggestions() {
     echo "No changes to suggest commit message for."
     return
   fi
-  
-  echo "Generating commit message and branch name based on the changes..."
   
   # Create temp files for our changes, prompt template, and Python script
   local tmp_changes_file=$(mktemp)
@@ -107,8 +125,9 @@ EOPY
   request_body=$(jq -n \
     --arg system "$SUGGESTION_SYSTEM_PROMPT" \
     --arg user_prompt "$formatted_prompt" \
+    --arg model "$DEFAULT_MODEL" \
     '{
-      "model": "gpt-4o",
+      "model": $model,
       "messages": [
         {
           "role": "system",
@@ -136,6 +155,9 @@ EOPY
 call_openai_api() {
   local request_body="$1"
   
+  # Extract model from request body for pricing calculations
+  local model=$(echo "$request_body" | jq -r '.model')
+  
   # Send request and capture response
   local response
   response=$(curl -s https://api.openai.com/v1/chat/completions \
@@ -144,18 +166,99 @@ call_openai_api() {
     -H "Accept: application/json" \
     -d "$request_body" | jq -c .)
   
+  # Check for errors in the response
+  if echo "$response" | jq -e '.error' > /dev/null; then
+    local error_message=$(echo "$response" | jq -r '.error.message')
+    echo "Error from OpenAI API: $error_message" >&2
+    return 1
+  fi
+  
   # Update token usage counters
-  local prompt_tokens=$(echo "$response" | jq -r '.usage.prompt_tokens // 0')
-  local completion_tokens=$(echo "$response" | jq -r '.usage.completion_tokens // 0')
+  local prompt_tokens=0
+  local completion_tokens=0
   
-  rg_TOTAL_INPUT_TOKENS=$((rg_TOTAL_INPUT_TOKENS + prompt_tokens))
-  rg_TOTAL_OUTPUT_TOKENS=$((rg_TOTAL_OUTPUT_TOKENS + completion_tokens))
+  # Try standard format first
+  if echo "$response" | jq -e '.usage.prompt_tokens' > /dev/null; then
+    prompt_tokens=$(echo "$response" | jq -r '.usage.prompt_tokens')
+    completion_tokens=$(echo "$response" | jq -r '.usage.completion_tokens')
+  # Try input/output tokens format
+  elif echo "$response" | jq -e '.usage.input_tokens' > /dev/null; then
+    prompt_tokens=$(echo "$response" | jq -r '.usage.input_tokens')
+    completion_tokens=$(echo "$response" | jq -r '.usage.output_tokens')
+  # Try other potential formats
+  elif echo "$response" | jq -e '.usage.token_count' > /dev/null; then
+    # Some APIs might use a different structure
+    prompt_tokens=$(echo "$response" | jq -r '.usage.token_count.prompt // 0')
+    completion_tokens=$(echo "$response" | jq -r '.usage.token_count.completion // 0')
+  else
+    echo "WARNING: Could not find token usage information in API response" >&2
+    # Save the response for debugging
+    echo "$response" > /tmp/api_response_debug.json
+    prompt_tokens=0
+    completion_tokens=0
+  fi
   
-  # Calculate cost for this request
-  local input_cost=$(echo "$prompt_tokens * $rg_GPT4O_INPUT_PRICE / 1000" | bc -l)
-  local output_cost=$(echo "$completion_tokens * $rg_GPT4O_OUTPUT_PRICE / 1000" | bc -l)
-  local request_cost=$(echo "$input_cost + $output_cost" | bc -l)
-  rg_TOTAL_COST=$(echo "$rg_TOTAL_COST + $request_cost" | bc -l)
+  # Ensure we're dealing with numbers
+  if [[ ! "$prompt_tokens" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: Invalid prompt_tokens value: $prompt_tokens" >&2
+    prompt_tokens=0
+  fi
+  
+  if [[ ! "$completion_tokens" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: Invalid completion_tokens value: $completion_tokens" >&2
+    completion_tokens=0
+  fi
+  
+  # Force conversion to integers
+  prompt_tokens=$((prompt_tokens + 0))
+  completion_tokens=$((completion_tokens + 0))
+  
+  # Use a token file to persist values between function calls
+  TOKEN_FILE="/tmp/reportgen_token_counters.txt"
+  
+  # Read the current values
+  read -r file_input_tokens file_output_tokens file_cost < "$TOKEN_FILE"
+  
+  # Ensure values are numbers
+  [[ "$file_input_tokens" =~ ^[0-9]+$ ]] || file_input_tokens=0
+  [[ "$file_output_tokens" =~ ^[0-9]+$ ]] || file_output_tokens=0
+  [[ "$file_cost" =~ ^[0-9.]+$ ]] || file_cost=0
+  
+  # Update the counters
+  file_input_tokens=$((file_input_tokens + prompt_tokens))
+  file_output_tokens=$((file_output_tokens + completion_tokens))
+  
+  # Update global variables too for the current process
+  export rg_TOTAL_INPUT_TOKENS=$file_input_tokens
+  export rg_TOTAL_OUTPUT_TOKENS=$file_output_tokens
+  
+  # Calculate cost for this request based on model
+  local input_price
+  local output_price
+  
+  if [ "$model" = "gpt-4.1-mini" ]; then
+    input_price=$rg_GPT41MINI_INPUT_PRICE
+    output_price=$rg_GPT41MINI_OUTPUT_PRICE
+  elif [ "$model" = "gpt-4o" ]; then
+    input_price=$rg_GPT4O_INPUT_PRICE
+    output_price=$rg_GPT4O_OUTPUT_PRICE
+  else
+    # Default to GPT-4.1 mini pricing if model is unknown
+    input_price=$rg_GPT41MINI_INPUT_PRICE
+    output_price=$rg_GPT41MINI_OUTPUT_PRICE
+  fi
+  
+  # Calculate cost PER MILLION tokens (not per thousand)
+  local input_cost=$(echo "scale=10; ($prompt_tokens * $input_price) / 1000000" | bc -l)
+  local output_cost=$(echo "scale=10; ($completion_tokens * $output_price) / 1000000" | bc -l)
+  local request_cost=$(echo "scale=10; $input_cost + $output_cost" | bc -l)
+  
+  # Update total cost
+  file_cost=$(echo "scale=10; $file_cost + $request_cost" | bc -l)
+  export rg_TOTAL_COST=$file_cost
+  
+  # Save updated values to file
+  echo "$file_input_tokens $file_output_tokens $file_cost" > "$TOKEN_FILE"
   
   echo "$response"
 }
@@ -221,70 +324,49 @@ EOPY
 
 # Display usage summary
 display_usage_summary() {
+  # Ensure we have the latest token values from file
+  TOKEN_FILE="/tmp/reportgen_token_counters.txt"
+  if [[ -f "$TOKEN_FILE" ]]; then
+    read -r file_input_tokens file_output_tokens file_cost < "$TOKEN_FILE"
+    
+    # Ensure values are numbers
+    [[ "$file_input_tokens" =~ ^[0-9]+$ ]] || file_input_tokens=0
+    [[ "$file_output_tokens" =~ ^[0-9]+$ ]] || file_output_tokens=0
+    [[ "$file_cost" =~ ^[0-9.]+$ ]] || file_cost=0
+    
+    # Update global variables
+    export rg_TOTAL_INPUT_TOKENS=$file_input_tokens
+    export rg_TOTAL_OUTPUT_TOKENS=$file_output_tokens
+    export rg_TOTAL_COST=$file_cost
+  fi
+
   # Display token usage and cost information
   echo -e "\n===== USAGE SUMMARY ====="
   echo "Input tokens: $rg_TOTAL_INPUT_TOKENS"
   echo "Output tokens: $rg_TOTAL_OUTPUT_TOKENS"
   echo "Total tokens: $((rg_TOTAL_INPUT_TOKENS + rg_TOTAL_OUTPUT_TOKENS))"
 
-  # Calculate total cost in a way that preserves precision
-  local input_cost=$(echo "scale=10; $rg_TOTAL_INPUT_TOKENS * $rg_GPT4O_INPUT_PRICE / 1000" | bc)
-  local output_cost=$(echo "scale=10; $rg_TOTAL_OUTPUT_TOKENS * $rg_GPT4O_OUTPUT_PRICE / 1000" | bc)
-  rg_TOTAL_COST=$(echo "scale=10; $input_cost + $output_cost" | bc)
-
   # Format cost with simple rounding to show appropriate significant digits
   format_cost
   
   echo "Cost: $rg_formatted_cost USD"
+  echo "Model used: $DEFAULT_MODEL"
 }
 
 # Format the cost for display
 format_cost() {
+  # For zero cost, just show $0.00
   if (( $(echo "$rg_TOTAL_COST == 0" | bc -l) )); then
-    rg_formatted_cost="$0.00"
-  elif (( $(echo "$rg_TOTAL_COST >= 0.01" | bc -l) )); then
-    # For costs >= $0.01, show 2 decimal places
-    rg_formatted_cost=$(printf "$%.2f" "$rg_TOTAL_COST")
-  elif (( $(echo "$rg_TOTAL_COST >= 0.001" | bc -l) )); then
-    # For costs >= $0.001, show 3 decimal places
-    rg_formatted_cost=$(printf "$%.3f" "$rg_TOTAL_COST")
-  elif (( $(echo "$rg_TOTAL_COST >= 0.0001" | bc -l) )); then
-    # For costs >= $0.0001, show 4 decimal places
-    rg_formatted_cost=$(printf "$%.4f" "$rg_TOTAL_COST")
+    rg_formatted_cost="\$0.00"
+    return
+  fi
+  
+  # Use a simpler approach for small numbers
+  if (( $(echo "$rg_TOTAL_COST < 0.01" | bc -l) )); then
+    # For very small costs (less than a cent), show 5 decimal places
+    rg_formatted_cost=$(printf "\$%.5f" "$rg_TOTAL_COST")
   else
-    # For very small costs, round to 5 significant digits
-    # First convert to scientific notation
-    local sci_notation=$(printf "%.10e" "$rg_TOTAL_COST")
-    
-    # Extract mantissa and exponent
-    local mantissa=$(echo "$sci_notation" | sed -E 's/([0-9]+\.[0-9]+)e.*/\1/')
-    local exponent=$(echo "$sci_notation" | sed -E 's/.*e-?([0-9]+)/\1/')
-    local sign=$(echo "$sci_notation" | grep -o 'e-' || echo "e+")
-    
-    if [ "$sign" = "e-" ]; then
-      # For negative exponents, show rounded decimal
-      local rounded_mantissa=$(printf "%.5g" "$mantissa" | sed 's/\.0*$//')
-      local rounded_cost=$(echo "scale=10; $rounded_mantissa * 10^-$exponent" | bc -l)
-      
-      # Determine decimal places needed (exponent + 1 to show first significant digit)
-      local decimal_places=$((exponent + 1))
-      if [ "$decimal_places" -gt 10 ]; then
-        decimal_places=10  # Cap at 10 decimal places for readability
-      fi
-      
-      # Format with appropriate number of decimal places
-      rg_formatted_cost=$(printf "$%.*f" "$decimal_places" "$rounded_cost")
-      
-      # Trim trailing zeros
-      rg_formatted_cost=$(echo "$rg_formatted_cost" | sed 's/\.0*$//' | sed 's/\.\([0-9]*[1-9]\)0*$/.\1/')
-      
-      # Ensure we have at least 1 decimal place for small numbers
-      if [[ ! "$rg_formatted_cost" =~ \. ]]; then
-        rg_formatted_cost="$rg_formatted_cost.0"
-      fi
-    else
-      # For positive exponents, use standard format
-      rg_formatted_cost=$(printf "$%.2f" "$rg_TOTAL_COST")
-    fi
+    # For larger costs, show 2 decimal places
+    rg_formatted_cost=$(printf "\$%.2f" "$rg_TOTAL_COST")
   fi
 } 
