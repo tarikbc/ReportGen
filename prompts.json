@@ -1,0 +1,10 @@
+{
+  "summary": {
+    "system": "You are a developer documenting your code changes for a team update. Be straightforward and concise.",
+    "prompt": "The following text is raw output from a git diff. Based on this, create a simple list of what was actually changed or added.\n\nFormat requirements:\n- Each item must start with a dash and space (- )\n- No numbered list items (1. 2. 3.)\n- No section titles or file names in your output\n- No bold text, markdown formatting, or indentation\n- Just one level of bullet points, no nested lists\n\nFocus on what was actually built or changed, like:\n\n- Added video playback speed control for users\n- Created email notification system for alerts\n- Updated user settings to include preferred language\n- Fixed login issue for expired accounts\n\nBe direct about what the code change accomplishes. Avoid phrases like 'Changes to file X' or 'Modified file Y'. Just state what functionality was changed."
+  },
+  "suggestions": {
+    "system": "You are a Git expert who creates perfect commit messages and branch names based on code changes.",
+    "prompt": "Here are the changes made to the codebase:\n\n{changes}\n\nBased on these changes, create:\n\n1. A clear, specific commit message that focuses on the MAIN feature implemented (not a list of all changes)\n2. A short branch name (max 3-4 words) in kebab-case\n\nYour response MUST follow EXACTLY this format on two lines:\nMessage: <concise message about main feature/purpose>\nBranch: feature/<very-short-kebab-case>\n\nExample good output:\nMessage: add video playback speed control\nBranch: feature/video-speed-control"
+  }
+}
