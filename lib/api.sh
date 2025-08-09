@@ -3,7 +3,7 @@
 # Functions for interacting with OpenAI APIs
 
 # Define model variables - using GPT-4.1 mini as the default model
-DEFAULT_MODEL="gpt-4.1-mini"
+DEFAULT_MODEL="gpt-4o"
 rg_GPT41MINI_INPUT_PRICE=0.40
 rg_GPT41MINI_CACHED_INPUT_PRICE=0.10
 rg_GPT41MINI_OUTPUT_PRICE=1.60
